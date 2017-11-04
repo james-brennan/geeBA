@@ -1,3 +1,7 @@
+
+![alt text](ba_scarv1.png)
+
+
 Starting on an fcc BA algorithm for use on GEE.
 
 At present using to learn how this thing works.
