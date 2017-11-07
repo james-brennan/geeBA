@@ -1,4 +1,3 @@
-
 /*
 
 This is a first try implementation of an fcc
@@ -31,7 +30,7 @@ var collection = ee.ImageCollection('COPERNICUS/S2')
  .filterDate('2016-07-04', '2016-09-04')
  .filterBounds(geometry).filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
  .filter(ee.Filter.eq('GEOMETRIC_QUALITY_FLAG', 'PASSED'));
- 
+
 
 /*
 Re-scale to TOA
@@ -46,7 +45,7 @@ collection = collection.map(scale);
 
 
 /*
-Perform a simple cloud, snow, water,shadow masking 
+Perform a simple cloud, snow, water,shadow masking
 
 Uses the decision tree from Figure 5 in:
 
@@ -96,7 +95,7 @@ var collectionM = collection.map(masker);
 
 
 /*
-taken from 
+taken from
   merge code from
  https://docs.google.com/document/d/1mNIRB90jwLuASO1JYas1kuOXCLbOoy1Z4NlV1qIXM10/edit
 
@@ -107,31 +106,32 @@ var lag = function(leftCollection, rightCollection, lagDays) {
   var filter = ee.Filter.and(
     ee.Filter.maxDifference({
       difference: 1000 * 60 * 60 * 24 * lagDays,
-      leftField: timeField, 
+      leftField: timeField,
       rightField: timeField
-    }), 
+    }),
     ee.Filter.greaterThan({
-      leftField: timeField, 
+      leftField: timeField,
       rightField: timeField
   }));
-  
   return ee.Join.saveAll({
     matchesKey: 'images',
     measureKey: 'delta_t',
-    ordering: timeField, 
+    ordering: timeField,
     ascending: true, // Sort reverse chronologically
   }).apply({
-    primary: leftCollection, 
-    secondary: rightCollection, 
+    primary: leftCollection,
+    secondary: rightCollection,
     condition: filter
   });
 };
 
 
-
+/*
+Make the collection with lagged data
+*/
 var lagged17 = lag(collectionM, collectionM, 10);
 
- 
+
 
 
 var merge = function(image) {
@@ -153,11 +153,11 @@ More than one image seems to get through
 the filtering at present
 so we may end up with
 
-B1_2 
+B1_2
 
 when we should just have B1_1 and B1
 
-So let's filter out 
+So let's filter out
 
 
 
@@ -188,12 +188,11 @@ var justTwoFilter = function(image) {
 }
 
 // apply this filter
-
 var mergedLess  = merged17.map(justTwoFilter);
 
 
 /*
-The differencer adds the difference pre and 
+The differencer adds the difference pre and
 post to the image collection
 */
 var difference = function(image) {
@@ -228,27 +227,22 @@ var difftest = mergedLess.map(difference);
 
 /*
 
-
-write expl
-
-
+To use the linear regression in GEE
+we need to re-arrange the collection
+so that for each observation image
+we have the bands across the collection
 */
 
 var elementMaker1 = function (diff1, n) {
     /*
     This returns a feature for
     putting into the imageCollection
-
-
-
-    ADD MORE Documentations
-
     */
     var a0_coeffs = [1,1,1,1,1,1,1,1,1,1,1,1];
     var a1_coeffs = ee.List([0.05412218,  0.11710486,  0.19      ,
                        0.30329678,  0.34379875,  0.38004061,
-                       0.42097412,  0.469925  ,  0.49660975, 
-                       0.56522461, 0.84667881,  0.94170793,  
+                       0.42097412,  0.469925  ,  0.49660975,
+                       0.56522461, 0.84667881,  0.94170793,
                        0.98399775]);
 
     var preFire = diff1.select(["pre_BX".replace("X",n)]);
@@ -257,9 +251,9 @@ var elementMaker1 = function (diff1, n) {
     var a0 = ee.Image.constant(1.000001);
     var a1 = ee.Image.constant(a1_coeffs.get(parseInt(n, 10)-1)).toDouble();
     var imm = ee.Image([preFire, postFire, dFire ])
-    
-    
-    return imm.addBands(a0) 
+
+
+    return imm.addBands(a0)
               .addBands(a1 )
               .rename(["pre", "post", "delta", "a0", "a1"])
 };
@@ -269,9 +263,6 @@ var runner = function(image) {
   /*
   This runs the extra hack setup and then
   runs the fcc model!
-  
-
-  RETURN RESIDUALS!
   */
     var newFeature =  ee.FeatureCollection([
                     elementMaker1(image, '8'),
@@ -279,7 +270,7 @@ var runner = function(image) {
                     elementMaker1(image, '9'),
                     elementMaker1(image, '10'),
                     elementMaker1(image, '11'),
-                    elementMaker1(image, '12')]);           
+                    elementMaker1(image, '12')]);
     //print(newFeature);
     var f = ee.ImageCollection(newFeature);
     var uuu = f.select(['a0', 'a1', 'pre', 'delta']);
@@ -301,16 +292,30 @@ var runner = function(image) {
 
 
 /*
-Map over difftest
+Run the model
 */
-
 var output = difftest.map(runner);
 print(output);
 
 
 Map.addLayer(output);
 
-var diff1 = ee.Image(difftest.first());
 
-//var test = runner(diff1);
-print (test);
+var postMask = function(image) {
+  /*
+  make mask
+  */
+  var fcc = image.select("fcc");
+  var a0 = image.select("a0");
+  var a1 = image.select("a1");
+  var fccmask = fcc.gt(0).and(fcc.lt(1));
+  var a1mask =  a1.gt(0).and(a1.lt(1));
+  var a0mask =  a0.gt(0).and(a0.lt(1));
+  var mask = fccmask.and(a1mask).and(a0mask);
+  return image.updateMask(fccmask);
+}
+
+
+var outputm = output.map(postMask);
+
+Map.addLayer(output.max());
